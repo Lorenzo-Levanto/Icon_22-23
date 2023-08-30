@@ -3,12 +3,12 @@ import tkinter as tk
 import warnings
 import numpy as np
 import Model as m
-
 from tkinter import ttk
 warnings.filterwarnings('ignore')
 
 #Funzione per il pulsante
 def predizione_prezzo():
+
     Label_Prediction.configure(text="")
     
     country = Entry_Country.get()
@@ -73,9 +73,25 @@ def predizione_prezzo():
 
     sample = scaler.transform(sample.reshape(1, -1))
 
-    forest_modelPredict = forest_model.predict(sample)
-    
-    Label_Prediction.configure(text=("Il prezzo predetto è: %.2f" %forest_modelPredict))
+    modelScelto = str(ComboBox_Model.get())
+    if(modelScelto == 'Random Forest'):
+        forest_modelPredict = forest_model.predict(sample)
+        Label_Prediction.configure(text=("Il prezzo predetto è: %.2f" %forest_modelPredict))
+    elif (modelScelto == 'SGD'):
+
+        predicted_probabilities = SGD_model.predict_proba(sample).squeeze()
+
+        # Retrieve the index and probability
+        index = np.argmax(predicted_probabilities) # Indice della probabilità maggiore            
+        probability = predicted_probabilities[index]  # Mi prendo la percentuale di probabilità in base all'indice qui sopra
+
+        if(index == len(predicted_probabilities)-1):
+            text = (F"Questo sample ha probabilità {probability*100:.2f}%\ndi rientrare nella fascia da {(price_ranges[int(index)])[0]} in su.")
+        else:
+            text = (F"Questo sample ha probabilità {probability*100:.2f}%\ndi rientrare nella fascia {price_ranges[int(index)]}.")
+        Label_Prediction.configure(text=text)
+    else:
+        raise NotImplementedError(F"Scegli un modello valido. Hai scelto {modelScelto}.")
 
 def update_streets(event):
     streets = m.get_Via_withCity(Entry_City.get())
@@ -83,15 +99,27 @@ def update_streets(event):
     Entry_Street.current(0)
     return
 
-prices_x_train, prices_x_test, prices_y_train, prices_y_test, scaler  = m.crea_basedati()
+price_ranges = [
+    (0, 80000),
+    (80000, 150000),
+    (150000, 200000),
+    (200000, 650000),
+    (650000, 1000000),
+    (1000000, 3000000),
+    (3000000, float('inf'))
+]
+
+prices_x_train, prices_x_test, prices_y_train, prices_y_test, scaler  = m.crea_basedati(modelUsed="RandomForest")
+prices_x_train_SGD, prices_x_test_SGD, prices_y_train_SGD, prices_y_test_SGD, scaler_SGD  = m.crea_basedati(modelUsed="SGD")
+
 forest_model = m.modello(prices_x_train, prices_x_test, prices_y_train, prices_y_test)
+SGD_model = m.modello2(prices_x_train_SGD, prices_x_test_SGD, prices_y_train_SGD, prices_y_test_SGD)
 
 window = tk.Tk()
 
 window.geometry("700x700")
 window.title("House Prediction in USA")
 window.resizable(False, False)
-
 
 Label_Titolo = tk.Label(window, text="Seleziona i valori", font=("Helvetica", 20))
 Label_Titolo.grid(row=0,column=0, columnspan=3, padx=10)
@@ -196,12 +224,20 @@ Entry_Cond = ttk.Spinbox(window,from_ = 1, to = 5, wrap=True, increment=1, forma
 Entry_Cond.grid(row=14, column=1, padx=1, sticky="W")
 Entry_Cond.set(0)
 
-Label_Prediction = tk.Label(window, text="", fg="red",font=("Helvetica", 16))
-Label_Prediction.grid(row=20, column=0,columnspan=2, padx=10) 
+# ComboBox per il modello
+Label_Model = tk.Label(window, text = "Scegli il modello: ", font=("Helvetica", 16))
+Label_Model.grid(row=17, column=0, padx=1, sticky="W")
+ComboBox_Model = ttk.Combobox(window, values = m.get_Modello(), state = 'readonly')
+ComboBox_Model.grid(row=17, column=1, padx=1, sticky="W")
+ComboBox_Model.current(0)
 
 #Creo il pulsante per il passaggio dei valori dell'utente
 getValue_button = tk.Button(text="Avvia Predizione", command=predizione_prezzo)
-getValue_button.grid(row=17, column=0, columnspan=2, padx=10, pady=10)
+getValue_button.grid(row=18, column=0, columnspan=2, padx=10, pady=10)
+
+# Label per la predizione
+Label_Prediction = tk.Label(window, text="", fg="red",font=("Helvetica", 16))
+Label_Prediction.grid(row=20, column=0,columnspan=2, padx=10) 
 
 if __name__ == "__main__":
     window.mainloop()
