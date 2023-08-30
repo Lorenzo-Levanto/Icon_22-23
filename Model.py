@@ -6,10 +6,11 @@ import pandas as pd
 from sklearn import preprocessing
 from sklearn.cluster import DBSCAN
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import SGDClassifier
 from tqdm import tqdm
 from sklearn.calibration import LabelEncoder
-from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.model_selection import GridSearchCV, KFold, train_test_split
 
 warnings.filterwarnings('ignore')
 indexState = 2167
@@ -31,6 +32,7 @@ class model:
     Vista = None
     Condizione = None
     Above= None
+    Modello = None
 
     streets = None
     citys = None
@@ -38,7 +40,23 @@ class model:
 
     features = ['sqft_living','sqft_lot','floors','waterfront','view','condition','sqft_above','sqft_basement','yr_built','yr_renovated','street','city','country','rooms']
 
-def crea_basedati():
+# Function to map house prices to price range categories
+def map_to_price_range(price):
+    price_ranges = [
+        (0, 80000),
+        (80000, 150000),
+        (150000, 200000),
+        (200000, 650000),
+        (650000, 1000000),
+        (1000000, 3000000),
+        (3000000, float('inf'))
+    ]
+    for idx, (lower, upper) in enumerate(price_ranges):
+        if lower <= price < upper:
+            return idx
+    return len(price_ranges)
+
+def crea_basedati(modelUsed='None'):
     #read data
     """
     # Leggi il file CSV
@@ -128,6 +146,7 @@ def crea_basedati():
     model.Above = sorted(list(case.sqft_above.unique()))
     model.Vista = sorted(list(case.view.unique()))
     model.Condizione = sorted(list(case.condition.unique()))
+    model.Modello = ['Random Forest', "SGD"]
     
     house = pd.get_dummies(data, columns=['city'], prefix=['city'])
 
@@ -139,7 +158,7 @@ def crea_basedati():
     columns = house.columns
     columns = columns.drop('price')
     
-    #Processo per rendere i dati degli scalari 
+    # Processo per rendere i dati degli scalari 
     scaler = preprocessing.MinMaxScaler(feature_range = (0, 1))
     
     normal = pd.DataFrame(scaler.fit_transform(house.loc[:, house.columns!='price']), columns = columns)
@@ -147,19 +166,27 @@ def crea_basedati():
 
     model.dataframe = normal.copy()
 
-
     prices_x = normal
-    prices_y = pd.DataFrame(house["price"])
+    # ---------------- #
+    if(modelUsed == 'RandomForest'):
+        prices_y = pd.DataFrame(house["price"]) # Prezzi normali
+    elif (modelUsed == 'SGD'):
+        prices_y = pd.DataFrame(house["price"])
+        # Applico la funzione per creare la variabile target (categorie fascia di prezzo)
+        prices_y['price'] = prices_y['price'].apply(map_to_price_range)
+    else:
+        raise NotImplementedError(F"Parametro modelUsed non corretto. Hai usato: '{modelUsed}'.")  
 
-    #Apprendimento non supervisionato con clustering
+    # Apprendimento non supervisionato con clustering
     clusters = DBSCAN(eps=0.9, min_samples=3).fit(prices_x)
-    clusters.labels_
     prices_x["noise"] = clusters.labels_
     prices_y["noise"] = clusters.labels_
     prices_x = prices_x[prices_x.noise>-1]
     prices_y = prices_y[prices_y.noise>-1]
     prices_x.drop('noise', inplace = True, axis=1)
     prices_y.drop('noise', inplace = True, axis=1)
+
+    # Train/test split    
     np.random.seed(indexState)
     prices_x_train, prices_x_test, prices_y_train, prices_y_test = train_test_split(prices_x, prices_y, test_size=0.2)
     
@@ -167,14 +194,13 @@ def crea_basedati():
     prices_x_test = prices_x_test.to_numpy()
     prices_y_train = prices_y_train.to_numpy()
     prices_y_test = prices_y_test.to_numpy()
-
-    print('Training set size: %d' %len(prices_x_train))
-    print('Test set size: %d' %len(prices_x_test))
-    print('----------------------------------------------')
-    print(F'Shape of X values for Training set: {prices_x_train.shape}')
-    print(F'Shape of Y values for Training set: {prices_y_train.shape}')
-    print('----------------------------------------------')
-
+    
+    # print('Training set size: %d' %len(prices_x_train))
+    # print('Test set size: %d' %len(prices_x_test))
+    # print('----------------------------------------------')
+    # print(F'Shape of X values for Training set: {prices_x_train.shape}')
+    # print(F'Shape of Y values for Training set: {prices_y_train.shape}')
+    # print('----------------------------------------------')
    
     return prices_x_train, prices_x_test, prices_y_train, prices_y_test, scaler
 
@@ -204,47 +230,125 @@ def plot(predictions, x, y, n_feature):
     plt.suptitle(title)            
     plt.show()
 
+def modello2(prices_x_train, prices_x_test, prices_y_train, prices_y_test):
+
+    # Create and train the SGD model
+    SGD_model = SGDClassifier(loss="log", n_jobs=-1, alpha=0.0001, random_state=indexState)
+
+    # # ========== Grid Search  ========== #
+    # xConcatenato = np.concatenate((prices_x_train, prices_x_test), axis=0)
+    # yConcatenato = np.concatenate((prices_y_train, prices_y_test), axis=0)
+    #
+    # cv = KFold(n_splits=10, shuffle=True, random_state=indexState)
+    # listaAccuracy = []
+    # i = 0
+    # print("-- Grid Search per SGD --\n")
+
+    # for tr_idx, test_idx in cv.split(xConcatenato, yConcatenato):
+    #     i += 1
+    #     correctGrid = 0
+    #     X_train, X_test = xConcatenato[tr_idx], xConcatenato[test_idx]
+    #     y_train, y_test = yConcatenato[tr_idx], yConcatenato[test_idx]
+
+    #     grid_search_regression = GridSearchCV(SGD_model,
+    #                             {
+    #                             'alpha':np.arange(0.0001,0.0006,0.0001),                            
+    #                             'fit_intercept': [True, False],
+    #                             }, cv=cv, scoring="accuracy", verbose=1, n_jobs=-1
+    #                             )
+
+    #     grid_search_regression.fit(X_train, np.squeeze(y_train).ravel())
+
+    #     gridSearchPred = grid_search_regression.predict_proba(X_test)
+    #     gridSearchPred = np.argmax(gridSearchPred, axis=1)
+    #     correctGrid += (gridSearchPred == np.squeeze(y_test)).sum()
+    #     accuracyPerFold = (correctGrid/y_test.size)*100
+    #     listaAccuracy.append(accuracyPerFold)
+    #     print(F"Split n.{i} | Best hyper-parameters per SGD: {grid_search_regression.best_params_}")
+    #     print(f"Accuracy split n.{i}: {accuracyPerFold:.2f}%")
+
+    # split_numbers = np.arange(1, 10 + 1)
+    # plt.plot(split_numbers, listaAccuracy, label='Accuracies')
+    # plt.xlabel('Split')
+    # plt.ylabel('Accuracy')
+    # plt.title('Accuracy Grid Search - SGD')
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
+
+    # ========== SGD normale ========== #
+    correct = 0
+    SGD_model.fit(prices_x_train, prices_y_train)
+    y_pred = SGD_model.predict_proba(prices_x_test)
+    y_pred_probabilities = y_pred
+    y_pred = np.argmax(y_pred, axis=1)
+    correct += (y_pred == np.squeeze(prices_y_test)).sum()
+
+    print(f"Accuracy SGD: {(correct/prices_y_test.size)*100:.2f}%")
+
+    disp = printConfusionMatrix(prices_y_test, y_pred, SGD_model, 'SGD').plot()
+
+    return SGD_model
+
 def modello(prices_x_train, prices_x_test, prices_y_train, prices_y_test):
 
-    #Apprendimento supervisionato
+    # Apprendimento supervisionato
     forest_model = RandomForestRegressor(n_jobs=-1, random_state=indexState)
 
-    # K-fold cross-validation con k=5
-    kfold = KFold(n_splits=5, shuffle=True, random_state=indexState)
-    
-    # Lista per memorizzare i punteggi MAE ottenuti in ciascuna fold
-    scores = []
-    
-    for train_index, val_index in kfold.split(prices_x_train):
-        # Suddivisione dei dati in training set e validation set
-        x_train_fold, x_val_fold = prices_x_train[train_index], prices_x_train[val_index]
-        y_train_fold, y_val_fold = prices_y_train[train_index], prices_y_train[val_index]
-        
-        # Addestramento del modello sul training set della fold corrente
-        forest_model.fit(x_train_fold, y_train_fold)
-        
-        # Valutazione del modello sul validation set della fold corrente
-        y_val_pred = forest_model.predict(x_val_fold)
-        
-        # Calcolo del punteggio MAE per la fold corrente
-        fold_score = mean_absolute_error(y_val_fold, y_val_pred)
-        
-        # Aggiunta del punteggio alla lista dei punteggi
-        scores.append(fold_score)
-    
-    # Calcolo del punteggio medio MAE attraverso le fold
-    mean_score = np.mean(scores)
-    
+    # # ========== Grid Search ========== #
+    # xConcatenato = np.concatenate((prices_x_train, prices_x_test), axis=0)
+    # yConcatenato = np.concatenate((prices_y_train, prices_y_test), axis=0)
+
+    # cv = KFold(n_splits=10, shuffle=True, random_state=indexState)
+    # listaR2Scores = []
+    # i = 0
+    # print("-- Grid Search per forestmodel --\n")
+    # for tr_idx, test_idx in cv.split(xConcatenato, yConcatenato):
+    #     i += 1
+    #     X_train, X_test = xConcatenato[tr_idx], xConcatenato[test_idx]
+    #     y_train, y_test = yConcatenato[tr_idx], yConcatenato[test_idx]
+
+    #     grid_search_regression = GridSearchCV(forest_model,
+    #                             {
+    #                             'n_estimators':np.arange(100,200,10),                            
+    #                             'criterion': ['mae', 'friedman_mse'],
+    #                             'bootstrap': [True, False],
+    #                             'warm_start': [True, False],
+    #                             }, cv=cv, scoring="neg_root_mean_squared_error", verbose=10, n_jobs=-1
+    #                             )
+
+    #     grid_search_regression.fit(X_train, np.squeeze(y_train).ravel())
+
+    #     gridSearchPred = grid_search_regression.predict(X_test)
+    #     r2score = r2_score(y_test, gridSearchPred)
+
+    #     listaR2Scores.append(r2score)
+    #     print(F"Split n.{i} | Best hyper-parameters per Forest Model: {grid_search_regression.best_params_}")
+    #     print(f"R2 score split n.{i}: {r2score:.2f}%")
+
+    # split_numbers = np.arange(1, 10 + 1)
+    # plt.plot(split_numbers, listaR2Scores, label='Scores')
+    # plt.xlabel('Split')
+    # plt.ylabel('R2 Score')
+    # plt.title('R2 Scores Grid Search - Random Forest')
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
+    # print("-----------------------------------------------------------------------------------")
+
+    # ========== RandomForest normale ========== #
     # Addestramento finale del modello sul training set completo
     forest_model.fit(prices_x_train, prices_y_train)
     
     # Valutazione del modello sul test set
     y_pred = forest_model.predict(prices_x_test)
-    
+
     # Check dei punteggi
-    print(f"Punteggio medio MAE attraverso la cross-validation: {mean_score:.5f}")
-    print(f"MAE sul test set: {mean_absolute_error(prices_y_test, y_pred):.5f}")
-    print(f"R2 Score sul test set: {r2_score(prices_y_test, y_pred):.5f}")
+    print(f"MAE RandomForest normale sul test set: {mean_absolute_error(prices_y_test, y_pred):.2f}")
+    print(f"MSE RandomForest normale sul test set: {mean_squared_error(prices_y_test, y_pred):.2f}")
+    print(f"R2 Score RandomForest normale sul test set: {r2_score(prices_y_test, y_pred):.2f}")
+    print("-----------------------------------------------------------------------------------")
+
     """
     Stampe dei grafici omessi
     plot(y_pred, prices_x_test, prices_y_test, n_feature=0)#sqft_living
@@ -264,6 +368,17 @@ def modello(prices_x_train, prices_x_test, prices_y_train, prices_y_test):
     """
     # Prediction of the model
     return forest_model
+
+def printConfusionMatrix(targets, predictions, classifierConf, label):
+    class_names = np.array(["0","1","2","3","4","5","6"])
+
+    print(F"Classification report for {label}:")
+    print(classification_report(targets, predictions, labels=[0,1,2,3,4,5,6], target_names=class_names, digits=3, zero_division="warn"))
+    print("============================================")
+
+    cm = confusion_matrix(targets, predictions, labels=classifierConf.classes_)
+
+    return ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classifierConf.classes_)
 
 def get_Citta():    
     return model.Citta
@@ -316,3 +431,6 @@ def get_Condizione():
 
 def get_Above():    
     return model.Above
+
+def get_Modello():
+    return model.Modello
